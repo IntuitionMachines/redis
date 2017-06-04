@@ -31,6 +31,7 @@
 #include "sha1.h"
 #include "rand.h"
 #include "cluster.h"
+#include "murmur3.h"
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -101,6 +102,22 @@ void sha1hex(char *digest, char *script, size_t len) {
         digest[j*2+1] = cset[(hash[j]&0xF)];
     }
     digest[40] = '\0';
+}
+
+/* Perform the mumur3 of the input string. 'digest' should point to a 9 byte buffer.
+ * 8 for the murmur and 1 for the null term. */
+void murmur3hex(char *digest, char *script, size_t len) {
+    uint32_t hash[4];
+    char *cset = "0123456789abcdef";
+    int j;
+
+		MurmurHash3_x64_128((unsigned char*)script, len, 0, hash);
+
+    for (j = 0; j < 4; j++) {
+      digest[(j*2)]  = cset[((hash[j]&0xF0)>>4)];
+      digest[(j*2) + 1 ] = cset[(hash[j]&0xF)];
+    }
+    digest[8] = '\0';
 }
 
 /* ---------------------------------------------------------------------------
@@ -639,6 +656,24 @@ int luaRedisCallCommand(lua_State *lua) {
 int luaRedisPCallCommand(lua_State *lua) {
     return luaRedisGenericCommand(lua,0);
 }
+/* This adds redis.murmur(string) to Lua scripts simliarly like sha1hex accept
+we return 128 bits of hex */
+int luaRedisMurmur3Command(lua_State *lua) {
+    int argc = lua_gettop(lua);
+    unsigned char digest[9];
+    size_t len;
+    char *s;
+
+    if (argc != 1) {
+        lua_pushstring(lua, "wrong number of arguments");
+        return lua_error(lua);
+    }
+
+    s = (char*)lua_tolstring(lua, 1, &len);
+    murmur3hex(digest, s, len);
+    lua_pushstring(lua, digest);
+    return 1;
+}
 
 /* This adds redis.sha1hex(string) to Lua scripts using the same hashing
  * function used for sha1ing lua scripts. */
@@ -944,6 +979,11 @@ void scriptingInit(int setup) {
     lua_pushstring(lua,"LOG_WARNING");
     lua_pushnumber(lua,LL_WARNING);
     lua_settable(lua,-3);
+
+    /* redis.murmur */
+    lua_pushstring(lua, "murmur");
+    lua_pushcfunction(lua, luaRedisMurmur3Command);
+    lua_settable(lua, -3);
 
     /* redis.sha1hex */
     lua_pushstring(lua, "sha1hex");
